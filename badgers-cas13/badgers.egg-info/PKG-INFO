@@ -1,6 +1,0 @@
-Metadata-Version: 2.1
-Name: badgers
-Version: 1.0
-Summary: Package to use model-guided exploration of sequence space to diagnostic design guide RNAs for CRISPR-Cas13a
-Home-page: https://github.com/broadinstitute/badgers-cas13
-License-File: LICENSE

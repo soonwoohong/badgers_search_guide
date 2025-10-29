@@ -3,7 +3,7 @@ This algorithm was inspired by the evolutionary algorithms described in the foll
 https://arxiv.org/abs/2010.02141, https://www.nature.com/articles/s41467-018-03746-3"""
 
 from typing import Optional, Tuple
-#from badgers.cas13_explorer import Cas13Explorer
+#from badgers_mod.cas13_explorer import Cas13Explorer
 import flexs
 from badgers.utils import prepare_sequences as prep_seqs
 from badgers.utils.prepare_sequences import track_performance as track_performance

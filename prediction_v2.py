@@ -3,22 +3,19 @@
 # change the color profile
 
 import numpy as np
-from badgers.utils import prepare_sequences as prep_seqs
+from badgers_mod.utils import prepare_sequences as prep_seqs
+from badgers_mod.utils import cas13_cnn as cas13_cnn
 import tensorflow as tf
-from badgers.utils import cas13_cnn as cas13_cnn
+
 import pandas as pd
-from flexs import Model
-import tkinter as tk
-from tkinter import filedialog
-import os
+
 import seaborn as sns
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap, BoundaryNorm
 import time
 
 
-root = tk.Tk()
-root.withdraw()
+
 
 
 grid = {'c': 1.0, 'a': 3.769183, 'k': -3.833902, 'o': -2.134395, 't2w': 2.973052}
@@ -27,10 +24,9 @@ grid = {'c': 1.0, 'a': 3.769183, 'k': -3.833902, 'o': -2.134395, 't2w': 2.973052
 cell_size = 0.4 # in the heatmap (inch)
 color_map_type = "YlGnBu"#"viridis" # or "YlGnBu"
 
-
 # gen_guide, target_set1, target_set2
-gen_guide_file = filedialog.askopenfilename(filetypes=[("badgers-predicted crRNAs", "*.xlsx")], title = 'please select crRNA file to open')
-target_list_file = filedialog.askopenfilename(filetypes=[("targets", "*.xlsx")], title = 'please select target file to open')
+gen_guide_file = '/Users/soonwoohong/Library/CloudStorage/GoogleDrive-sh5230@princeton.edu/.shortcut-targets-by-id/1fc61rmoxxDIgSxNlbKpHNutryvyYltP4/Soonwoo/Projects/TB DST - CRISPR/sequence data/INH/inhA/results/InhA_new_102825/cluster1-3_final_merge.xlsx'
+target_list_file = '/Users/soonwoohong/Library/CloudStorage/GoogleDrive-sh5230@princeton.edu/.shortcut-targets-by-id/1fc61rmoxxDIgSxNlbKpHNutryvyYltP4/Soonwoo/Projects/TB DST - CRISPR/sequence data/INH/inhA/results/one-vs-others/INH_inhA_targets_incl_WT.xlsx'
 gen_guide_data = pd.read_excel(gen_guide_file, header=0)
 # this target file should have WT sequence if you want to include it
 target_data = pd.read_excel(target_list_file, header=0)
@@ -96,3 +92,6 @@ for gap in ([0.1, 0.2, 0.3, 0.4, 0.5]):
     plt.show()
     fig.savefig(gen_guide_file[0:-5]+"_gap_"+str(gap).replace(".",",")+".png", bbox_inches='tight', dpi=300)
 
+def align_seq():
+
+    return

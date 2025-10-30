@@ -1,5 +1,9 @@
 """
 This is a code for searching guide sequence based on the ADAPT model.
+
+calculate a batch of guides
+
+
 Input:
 target sequence
 (optional) guide sequence (starting)
@@ -25,7 +29,7 @@ context_nt = 10
 pos4 = tf.constant(4.0)
 
 # search parameter
-scan_size = 10
+scan_size = 6
 top_k_crRNA = 4
 max_mismatches = 2
 
@@ -90,7 +94,7 @@ DNA_bases = "ACGT"
 
 # make intentional mismatch
 def generate_intentional_mismatches(guide: str,
-                                    max_mismatches: max_mismatches,
+                                    max_mismatches =  max_mismatches,
                                     alphabet=DNA_bases):
     """
     Yield the original guide first, then mutated guides with up to `max_mismatches`.
@@ -119,7 +123,6 @@ def generate_intentional_mismatches(guide: str,
                 yield "".join(guide_list)
 
 
-
 cluster_idx = 1
 for cluster in clusters:
 
@@ -139,34 +142,38 @@ for cluster in clusters:
             seq_of_interest = seqs[interest]
             idx_of_interest = cluster_incl_WT[interest]
             start_guide = [seq_of_interest[start_pos-1:start_pos-1+28]]
+            candidate_guides = []
+            candidate_guides_onehot = []
             guide_set = generate_intentional_mismatches(start_guide[0])
             for g in guide_set:
-                # The predictive models require 10 nt of context on each side of the 28 nt probe-binding region
-                seqs_frag = [s[start_pos - context_nt-1:start_pos - context_nt-1 + 48] for s in seqs]
-                seqs_onehot = [prep_seqs.one_hot_encode(x) for x in seqs_frag]
-                gen_guide_onehot = [prep_seqs.one_hot_encode(x) for x in [g]]
-                pred_perf_seqs, pred_act_seqs = cas13_cnn.run_full_model(gen_guide_onehot, seqs_onehot)
-                weighted_perf_seqs = tf.math.subtract(tf.math.multiply(pred_act_seqs, tf.math.add(pred_perf_seqs, pos4)), pos4)
-                weighted_perf_seqs_np = weighted_perf_seqs[0].numpy()
-                # score
-                # instead of just subtracting the mean off-target from the on-target,
-                # put the additional penalty of top_off_target.
-                # later, I can add some weights to increase either of penalty.
-                on_target_act = weighted_perf_seqs_np[interest]
-                try:
-                    top_off_target_act = np.max(weighted_perf_seqs_np[weighted_perf_seqs_np != on_target_act])
-                except:
-                    continue
-                mean_off_target_act = np.mean(weighted_perf_seqs_np[weighted_perf_seqs_np != on_target_act])
-                temp_score = on_target_act - top_off_target_act-mean_off_target_act
-                if selected_crRNAs[target_name[idx_of_interest]] is None:
-                    selected_crRNAs[target_name[idx_of_interest]] = [(start_pos, start_guide, temp_score, on_target_act)]
-                    selected_crRNAs[target_name[idx_of_interest]].sort(key=lambda x: x[2], reverse=True)
-                    selected_crRNAs[target_name[idx_of_interest]] = selected_crRNAs[target_name[idx_of_interest]][0:top_k_crRNA*2]
-                else:
-                    selected_crRNAs[target_name[idx_of_interest]].append((start_pos, start_guide, temp_score, on_target_act))
-                    selected_crRNAs[target_name[idx_of_interest]].sort(key=lambda x: x[2], reverse=True)
-                    selected_crRNAs[target_name[idx_of_interest]] = selected_crRNAs[target_name[idx_of_interest]][0:top_k_crRNA*2]
+                candidate_guides.append(g)
+                candidate_guides_onehot.append(prep_seqs.one_hot_encode(g))
+
+            # The predictive models require 10 nt of context on each side of the 28 nt probe-binding region
+            seqs_frag = [s[start_pos - context_nt-1:start_pos - context_nt-1 + 48] for s in seqs]
+            seqs_onehot = [prep_seqs.one_hot_encode(x) for x in seqs_frag]
+            pred_perf_seqs, pred_act_seqs = cas13_cnn.run_full_model(candidate_guides_onehot, seqs_onehot)
+            weighted_perf_seqs = tf.math.subtract(tf.math.multiply(pred_act_seqs, tf.math.add(pred_perf_seqs, pos4)), pos4)
+            weighted_perf_seqs_np = weighted_perf_seqs[0].numpy()
+            # score
+            # instead of just subtracting the mean off-target from the on-target,
+            # put the additional penalty of top_off_target.
+            # later, I can add some weights to increase either of penalty.
+            on_target_act = weighted_perf_seqs_np[interest]
+            try:
+                top_off_target_act = np.max(weighted_perf_seqs_np[weighted_perf_seqs_np != on_target_act])
+            except:
+                continue
+            mean_off_target_act = np.mean(weighted_perf_seqs_np[weighted_perf_seqs_np != on_target_act])
+            temp_score = on_target_act - top_off_target_act - mean_off_target_act
+            if selected_crRNAs[target_name[idx_of_interest]] is None:
+                selected_crRNAs[target_name[idx_of_interest]] = [(start_pos, start_guide, temp_score, on_target_act)]
+                selected_crRNAs[target_name[idx_of_interest]].sort(key=lambda x: x[2], reverse=True)
+                selected_crRNAs[target_name[idx_of_interest]] = selected_crRNAs[target_name[idx_of_interest]][0:top_k_crRNA]
+            else:
+                selected_crRNAs[target_name[idx_of_interest]].append((start_pos, start_guide, temp_score, on_target_act))
+                selected_crRNAs[target_name[idx_of_interest]].sort(key=lambda x: x[2], reverse=True)
+                selected_crRNAs[target_name[idx_of_interest]] = selected_crRNAs[target_name[idx_of_interest]][0:top_k_crRNA]
     # make a dataframe to export
     rows = []
     for on_target_name, entries in selected_crRNAs.items():

@@ -16,17 +16,7 @@ from badgers_mod.utils import cas13_cnn as cas13_cnn
 import pandas as pd
 
 
-import os
-import seaborn as sns
-import matplotlib.pyplot as plt
-from matplotlib.colors import ListedColormap, BoundaryNorm
-import time
-
-from Bio import AlignIO
-from Bio.Seq import Seq
-from Bio.SeqRecord import SeqRecord
-from Bio import SeqIO
-from io import StringIO
+import itertools
 from Bio import Align
 
 # adapt prediction parameters (don't change unless necessary)
@@ -36,7 +26,8 @@ pos4 = tf.constant(4.0)
 
 # search parameter
 scan_size = 10
-top_k_crRNA = 10
+top_k_crRNA = 4
+max_mismatches = 2
 
 
 # heatmap parameter
@@ -94,9 +85,44 @@ if current_cluster:
     clusters.append(current_cluster)
 
 # search crRNAs
-selected_crRNAs = []
 
+DNA_bases = "ACGT"
+
+# make intentional mismatch
+def generate_intentional_mismatches(guide: str,
+                                    max_mismatches: max_mismatches,
+                                    alphabet=DNA_bases):
+    """
+    Yield the original guide first, then mutated guides with up to `max_mismatches`.
+    """
+    L = len(guide)
+    positions = range(L)
+
+    # always yield original
+    yield guide
+
+    # all unordered pairs
+    for k in range(1, max_mismatches + 1):
+        # choose which positions to mutate
+        for pos_tuple in itertools.combinations(positions, k):
+            # for each chosen position, build the list of possible alternative bases
+            # (i.e. anything except the original base at that position)
+            choices_per_pos = [
+                [b for b in alphabet if b != guide[p]]
+                for p in pos_tuple
+            ]
+            # Cartesian product over those choices → one mutated guide per combo
+            for repl_tuple in itertools.product(*choices_per_pos):
+                guide_list = list(guide)
+                for p, new_b in zip(pos_tuple, repl_tuple):
+                    guide_list[p] = new_b
+                yield "".join(guide_list)
+
+
+
+cluster_idx = 1
 for cluster in clusters:
+
     cluster_start = mm_coordinates[cluster[0]-1][1]
     cluster_end = mm_coordinates[cluster[-1]-1][2]
     print(f"Cluster {cluster} starts at {cluster_start} and ends at {cluster_end}")
@@ -105,90 +131,56 @@ for cluster in clusters:
     search_start = cluster_start - scan_size
     search_end = cluster_end + scan_size
     print(f"Search region starts at {search_start} and ends at {search_end}")
-    cluster = [0] + cluster # put the wt sequence to the head of list
-    seqs = [target_seqs[cluster_idx].upper() for cluster_idx in cluster]
-
+    cluster_incl_WT = [0] + cluster # put the wt sequence to the head of list
+    seqs = [target_seqs[cluster_idx].upper() for cluster_idx in cluster_incl_WT]
+    selected_crRNAs = dict.fromkeys([target_name[i] for i in cluster_incl_WT])
     for start_pos in range(search_start-28, search_end-28): # -28 because of crRNA spacer length
         for interest in range(len(seqs)):
             seq_of_interest = seqs[interest]
-            idx_of_interest = cluster[interest]
-        start_guide = [seq_of_interest[start_pos-1:start_pos-1+28]]
+            idx_of_interest = cluster_incl_WT[interest]
+            start_guide = [seq_of_interest[start_pos-1:start_pos-1+28]]
+            guide_set = generate_intentional_mismatches(start_guide[0])
+            for g in guide_set:
 
-        # The predictive models require 10 nt of context on each side of the 28 nt probe-binding region
-        seqs_frag = [s[start_pos - context_nt-1:start_pos - context_nt-1 + 48] for s in seqs]
-        seqs_onehot = [prep_seqs.one_hot_encode(x) for x in seqs_frag]
-        gen_guide_onehot = [prep_seqs.one_hot_encode(x) for x in start_guide]
-        pred_perf_seqs, pred_act_seqs = cas13_cnn.run_full_model(gen_guide_onehot, seqs_onehot)
-        weighted_perf_seqs = tf.math.subtract(tf.math.multiply(pred_act_seqs, tf.math.add(pred_perf_seqs, pos4)), pos4)
-        weighted_perf_seqs_np = weighted_perf_seqs[0].numpy()
-        # score
-        # instead of just subtracting the mean off-target from the on-target,
-        # put the additional penalty of top_off_target.
-        # later, I can add some weights to increase either of penalty.
-        on_target_act = weighted_perf_seqs_np[interest]
-        top_off_target_act = np.max(weighted_perf_seqs_np[weighted_perf_seqs_np != on_target_act])
-        mean_off_target_act = np.mean(weighted_perf_seqs_np[weighted_perf_seqs_np != on_target_act])
-        temp_score = on_target_act - top_off_target_act-mean_off_target_act
+                # The predictive models require 10 nt of context on each side of the 28 nt probe-binding region
+                seqs_frag = [s[start_pos - context_nt-1:start_pos - context_nt-1 + 48] for s in seqs]
+                seqs_onehot = [prep_seqs.one_hot_encode(x) for x in seqs_frag]
+                gen_guide_onehot = [prep_seqs.one_hot_encode(x) for x in [g]]
+                pred_perf_seqs, pred_act_seqs = cas13_cnn.run_full_model(gen_guide_onehot, seqs_onehot)
+                weighted_perf_seqs = tf.math.subtract(tf.math.multiply(pred_act_seqs, tf.math.add(pred_perf_seqs, pos4)), pos4)
+                weighted_perf_seqs_np = weighted_perf_seqs[0].numpy()
+                # score
+                # instead of just subtracting the mean off-target from the on-target,
+                # put the additional penalty of top_off_target.
+                # later, I can add some weights to increase either of penalty.
+                on_target_act = weighted_perf_seqs_np[interest]
+                try:
+                    top_off_target_act = np.max(weighted_perf_seqs_np[weighted_perf_seqs_np != on_target_act])
+                except:
+                    continue
+                mean_off_target_act = np.mean(weighted_perf_seqs_np[weighted_perf_seqs_np != on_target_act])
+                temp_score = on_target_act - top_off_target_act-mean_off_target_act
+                if selected_crRNAs[target_name[idx_of_interest]] is None:
+                    selected_crRNAs[target_name[idx_of_interest]] = [(start_pos, start_guide, temp_score, on_target_act)]
+                    selected_crRNAs[target_name[idx_of_interest]].sort(key=lambda x: x[2], reverse=True)
+                    selected_crRNAs[target_name[idx_of_interest]] = selected_crRNAs[target_name[idx_of_interest]][0:top_k_crRNA*2]
+                else:
+                    selected_crRNAs[target_name[idx_of_interest]].append((start_pos, start_guide, temp_score, on_target_act))
+                    selected_crRNAs[target_name[idx_of_interest]].sort(key=lambda x: x[2], reverse=True)
+                    selected_crRNAs[target_name[idx_of_interest]] = selected_crRNAs[target_name[idx_of_interest]][0:top_k_crRNA*2]
+    # make a dataframe to export
+    rows = []
+    for on_target_name, entries in selected_crRNAs.items():
+        for pos, seq_list, score, on_target_activity in entries:
+            rows.append({
+                "on_target_name": on_target_name,
+                "start_pos": pos,
+                "guide_sequence": seq_list[0],
+                "score": score,
+                "mean_on_target_act": on_target_activity,
+            })
 
+    final_output = pd.DataFrame(rows)
+    final_output.to_excel(f"./crRNA_search_results_{cluster_idx}.xlsx")
+    cluster_idx += 1
 
-for file_idx in range(len(gen_guide_data)):
-    #start = time.perf_counter()
-
-    start_pos = gen_guide_data.start_pos[file_idx]
-    guide_of_interest = [gen_guide_data.guide_sequence[file_idx]]
-    start_pos = gen_guide_data.start_pos[file_idx]
-    seqs = [seq.upper() for seq in target_data.new_seq]
-    # The predictive models require 10 nt of context on each side of the 28 nt probe-binding region
-    context_nt = 10
-    seqs_frag = [s[start_pos - context_nt-1:start_pos - context_nt-1 + 48] for s in seqs]
-    seqs_onehot = [prep_seqs.one_hot_encode(x) for x in seqs_frag]
-    gen_guide_onehot = [prep_seqs.one_hot_encode(x) for x in guide_of_interest]
-
-    pred_perf_seqs, pred_act_seqs = cas13_cnn.run_full_model(gen_guide_onehot, seqs_onehot)
-    pos4 = tf.constant(4.0)
-    weighted_perf_seqs = tf.math.subtract(tf.math.multiply(pred_act_seqs, tf.math.add(pred_perf_seqs, pos4)), pos4)
-
-    score_data.append(weighted_perf_seqs.numpy().tolist()[0])
-    #end = time.perf_counter()
-    #elapsed_seconds = end - start
-    #print(f"Elapsed: {elapsed_seconds:.6f} s")
-
-
-score_pd = pd.DataFrame(score_data, columns = target_data.new_name.to_list())
-exp_data = pd.concat([gen_guide_data,score_pd],axis=1)
-
-exp_data.to_excel(gen_guide_file[0:-5]+"_score.xlsx")
-
-#making heatmap
-final_data = np.array(score_data)
-final_data_subtracted = final_data - np.tile(gen_guide_data.mean_on_target_act.to_numpy()[:,np.newaxis], (1, len(target_data)))
-fig, ax = plt.subplots(figsize=(cell_size*gen_guide_data.shape[0]+3,
-                                cell_size*gen_guide_data.shape[1]+1),
-                                dpi=300)
-
-sns.heatmap(final_data.transpose(), cmap=color_map_type,
-            square = True,
-            ax = ax, linewidth = 0.3, linecolor = 'black')
-plt.show()
-fig.savefig(gen_guide_file[0:-5]+"_score.png", bbox_inches='tight', dpi=300)
-
-for gap in ([0.1, 0.2, 0.3, 0.4, 0.5]):
-    fig, ax = plt.subplots(figsize=(cell_size * gen_guide_data.shape[0] + 3,
-                                    cell_size * gen_guide_data.shape[1] + 1),
-                           dpi=300)
-
-    bounds = [-gap*4, -gap*3, -gap*2, -gap*1, 0.0001, 100]
-    colors = [(8,81,156),(49,130,189), (107,174,214), (189,215,231), (178,24,43)]  # One color per bin
-    normalized_colors = [(r/255, g/255, b/255) for r, g, b in colors]
-
-    cmap = ListedColormap(normalized_colors)
-    norm = BoundaryNorm(bounds, len(colors))
-
-    sns.heatmap(final_data_subtracted.transpose(), cmap=cmap, norm=norm, ax = ax, linewidth = 0.3, linecolor = 'black',
-                square = True)
-    plt.show()
-    fig.savefig(gen_guide_file[0:-5]+"_gap_"+str(gap).replace(".",",")+".png", bbox_inches='tight', dpi=300)
-
-def align_seq():
-
-    return

@@ -17,7 +17,6 @@ import time
 
 
 
-
 grid = {'c': 1.0, 'a': 3.769183, 'k': -3.833902, 'o': -2.134395, 't2w': 2.973052}
 
 # heatmap parameter
@@ -25,7 +24,7 @@ cell_size = 0.4 # in the heatmap (inch)
 color_map_type = "YlGnBu"#"viridis" # or "YlGnBu"
 
 # gen_guide, target_set1, target_set2
-gen_guide_file = '/Users/soonwoohong/Library/CloudStorage/GoogleDrive-sh5230@princeton.edu/.shortcut-targets-by-id/1fc61rmoxxDIgSxNlbKpHNutryvyYltP4/Soonwoo/Projects/TB DST - CRISPR/sequence data/INH/inhA/results/InhA_new_102825/cluster1-3_final_merge.xlsx'
+gen_guide_file = '/Users/soonwoohong/Library/CloudStorage/GoogleDrive-sh5230@princeton.edu/.shortcut-targets-by-id/1fc61rmoxxDIgSxNlbKpHNutryvyYltP4/Soonwoo/python/badgers_search_guide/crRNA_search_results_1.xlsx'
 target_list_file = '/Users/soonwoohong/Library/CloudStorage/GoogleDrive-sh5230@princeton.edu/.shortcut-targets-by-id/1fc61rmoxxDIgSxNlbKpHNutryvyYltP4/Soonwoo/Projects/TB DST - CRISPR/sequence data/INH/inhA/results/one-vs-others/INH_inhA_targets_incl_WT.xlsx'
 gen_guide_data = pd.read_excel(gen_guide_file, header=0)
 # this target file should have WT sequence if you want to include it
@@ -92,6 +91,3 @@ for gap in ([0.1, 0.2, 0.3, 0.4, 0.5]):
     plt.show()
     fig.savefig(gen_guide_file[0:-5]+"_gap_"+str(gap).replace(".",",")+".png", bbox_inches='tight', dpi=300)
 
-def align_seq():
-
-    return

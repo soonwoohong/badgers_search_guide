@@ -1,4 +1,7 @@
 """
++batch mode
++GPU or multiple CPU options
+
 This is a code for searching guide sequence based on the ADAPT model.
 
 calculate a batch of guides
@@ -18,7 +21,7 @@ from badgers_mod.utils import prepare_sequences as prep_seqs
 import tensorflow as tf
 from badgers_mod.utils import cas13_cnn as cas13_cnn
 import pandas as pd
-
+import os
 
 import itertools
 from Bio import Align
@@ -32,8 +35,8 @@ pos4 = tf.constant(4.0)
 scan_size = 10
 top_k_crRNA = 4
 max_mismatches = 3
-cut_off = -2.5
-
+cut_off = -2
+BATCH_SIZE = 512
 
 # heatmap parameter
 cell_size = 0.4 # in the heatmap (inch)
@@ -124,6 +127,15 @@ def generate_intentional_mismatches(guide: str,
                 guide_list[p] = new_b
             yield "".join(guide_list)
 
+def chunked(iterable, size):
+    buf = []
+    for x in iterable:
+        buf.append(x)
+        if len(buf) == size:
+            yield buf
+            buf = []
+    if buf:
+        yield buf
 
 cluster_idx = 1
 for cluster in clusters:
@@ -146,42 +158,40 @@ for cluster in clusters:
                 seq_of_interest = seqs[interest]
                 idx_of_interest = cluster_incl_WT[interest]
                 start_guide = [seq_of_interest[start_pos-1:start_pos-1+28]]
-                candidate_guides = []
-                candidate_guides_onehot = []
+
 
                 guide_set = generate_intentional_mismatches(start_guide[0], num_mismatches = num_mismatches)
-                for g in guide_set:
-                    candidate_guides.append(g)
-                    candidate_guides_onehot.append(prep_seqs.one_hot_encode(g))
 
                 # The predictive models require 10 nt of context on each side of the 28 nt probe-binding region
                 seqs_frag = [s[start_pos - context_nt-1:start_pos - context_nt-1 + 48] for s in seqs]
                 seqs_onehot = [prep_seqs.one_hot_encode(x) for x in seqs_frag]
-                pred_perf_seqs, pred_act_seqs = cas13_cnn.run_full_model(candidate_guides_onehot, seqs_onehot)
-                weighted_perf_seqs = tf.math.subtract(tf.math.multiply(pred_act_seqs, tf.math.add(pred_perf_seqs, pos4)), pos4)
-                weighted_perf_seqs_np = weighted_perf_seqs.numpy()
-                # score
-                # instead of just subtracting the mean off-target from the on-target,
-                # put the additional penalty of top_off_target.
-                # later, I can add some weights to increase either of penalty.
-                on_target_act = weighted_perf_seqs_np[:,interest]
-                # threshold mask
-                cut_off_mask = on_target_act > cut_off
-                filtered_guide_set = np.array(candidate_guides)[cut_off_mask]
-                filtered_on_target_act = on_target_act[cut_off_mask]
-                filtered_perf = weighted_perf_seqs_np[cut_off_mask]
+                for candidate_guides in chunked(guide_set, BATCH_SIZE):
+                    candidate_guides_onehot = [prep_seqs.one_hot_encode(g) for g in candidate_guides]
+                    pred_perf_seqs, pred_act_seqs = cas13_cnn.run_full_model(candidate_guides_onehot, seqs_onehot)
+                    weighted_perf_seqs = tf.math.subtract(tf.math.multiply(pred_act_seqs, tf.math.add(pred_perf_seqs, pos4)), pos4)
+                    weighted_perf_seqs_np = weighted_perf_seqs.numpy()
+                    # score
+                    # instead of just subtracting the mean off-target from the on-target,
+                    # put the additional penalty of top_off_target.
+                    # later, I can add some weights to increase either of penalty.
+                    on_target_act = weighted_perf_seqs_np[:,interest]
+                    # threshold mask
+                    cut_off_mask = on_target_act > cut_off
+                    filtered_guide_set = np.array(candidate_guides)[cut_off_mask]
+                    filtered_on_target_act = on_target_act[cut_off_mask]
+                    filtered_perf = weighted_perf_seqs_np[cut_off_mask]
 
-                # top_off_target_activity
-                mask_for_top_off_target = filtered_perf != filtered_on_target_act[:, None]
-                arr = filtered_perf.copy()
-                arr[~mask_for_top_off_target] = np.nan
-                top_off_target_act = np.nanmax(arr, axis = 1)
-                mean_off_target_act = np.nanmean(arr, axis =1)
-                temp_score = filtered_on_target_act - top_off_target_act - mean_off_target_act
-                for ii in range(len(filtered_guide_set)):
-                    selected_crRNAs[target_name[idx_of_interest]].append((start_pos, filtered_guide_set[ii], temp_score[ii], filtered_on_target_act[ii]))
+                    # top_off_target_activity
+                    mask_for_top_off_target = filtered_perf != filtered_on_target_act[:, None]
+                    arr = filtered_perf.copy()
+                    arr[~mask_for_top_off_target] = np.nan
+                    top_off_target_act = np.nanmax(arr, axis = 1)
+                    mean_off_target_act = np.nanmean(arr, axis =1)
+                    temp_score = filtered_on_target_act - (top_off_target_act + mean_off_target_act)/2
+                    for ii in range(len(filtered_guide_set)):
+                        selected_crRNAs[target_name[idx_of_interest]].append((start_pos, filtered_guide_set[ii], temp_score[ii], filtered_on_target_act[ii]))
 
-                selected_crRNAs[target_name[idx_of_interest]] = sorted(selected_crRNAs[target_name[idx_of_interest]], key=lambda x: -1e16 if np.isnan(x[2]) else x[2], reverse=True)[:top_k_crRNA]
+                    selected_crRNAs[target_name[idx_of_interest]] = sorted(selected_crRNAs[target_name[idx_of_interest]], key=lambda x: -1e16 if np.isnan(x[2]) else x[2], reverse=True)[:top_k_crRNA]
 
         # make a dataframe to export
         rows = []
@@ -196,6 +206,7 @@ for cluster in clusters:
                 })
 
         final_output = pd.DataFrame(rows)
-        final_output.to_excel(f"./best_crRNA_cluster_{cluster_idx}_mm_{num_mismatches}.xlsx")
+        os.makedirs("./output", exist_ok=True)
+        final_output.to_excel(f"./output/best_crRNA_cluster_{cluster_idx}_mm_{num_mismatches}.xlsx")
         cluster_idx += 1
 

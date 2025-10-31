@@ -34,7 +34,7 @@ pos4 = tf.constant(4.0)
 # search parameter
 scan_size = 10
 top_k_crRNA = 4
-max_mismatches = 3
+max_mismatches = 10
 cut_off = -2
 BATCH_SIZE = 512
 
@@ -167,8 +167,10 @@ for cluster in clusters:
                 seqs_onehot = [prep_seqs.one_hot_encode(x) for x in seqs_frag]
                 for candidate_guides in chunked(guide_set, BATCH_SIZE):
                     candidate_guides_onehot = [prep_seqs.one_hot_encode(g) for g in candidate_guides]
-                    pred_perf_seqs, pred_act_seqs = cas13_cnn.run_full_model(candidate_guides_onehot, seqs_onehot)
-                    weighted_perf_seqs = tf.math.subtract(tf.math.multiply(pred_act_seqs, tf.math.add(pred_perf_seqs, pos4)), pos4)
+
+                    with tf.device("/GPU:0"):
+                        pred_perf_seqs, pred_act_seqs = cas13_cnn.run_full_model(candidate_guides_onehot, seqs_onehot)
+                        weighted_perf_seqs = tf.math.subtract(tf.math.multiply(pred_act_seqs, tf.math.add(pred_perf_seqs, pos4)), pos4)
                     weighted_perf_seqs_np = weighted_perf_seqs.numpy()
                     # score
                     # instead of just subtracting the mean off-target from the on-target,
@@ -187,7 +189,8 @@ for cluster in clusters:
                     arr[~mask_for_top_off_target] = np.nan
                     top_off_target_act = np.nanmax(arr, axis = 1)
                     mean_off_target_act = np.nanmean(arr, axis =1)
-                    temp_score = filtered_on_target_act - (top_off_target_act + mean_off_target_act)/2
+                    #temp_score = filtered_on_target_act - (top_off_target_act + mean_off_target_act)/2
+                    temp_score = filtered_on_target_act - (top_off_target_act + mean_off_target_act)
                     for ii in range(len(filtered_guide_set)):
                         selected_crRNAs[target_name[idx_of_interest]].append((start_pos, filtered_guide_set[ii], temp_score[ii], filtered_on_target_act[ii]))
 

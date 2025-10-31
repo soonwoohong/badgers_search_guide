@@ -43,9 +43,9 @@ cell_size = 0.4 # in the heatmap (inch)
 color_map_type = "YlGnBu"#"viridis" # or "YlGnBu"
 
 # gen_guide, target_set1, target_set2
-gen_guide_file = './cluster1-3_final_merge.xlsx'
+#gen_guide_file = './cluster1-3_final_merge.xlsx'
 target_list_file = './INH_inhA_targets_incl_WT.xlsx'
-gen_guide_data = pd.read_excel(gen_guide_file, header=0)
+#gen_guide_data = pd.read_excel(gen_guide_file, header=0)
 
 target_data = pd.read_excel(target_list_file, header=0)
 target_seqs = target_data.new_seq.to_list()

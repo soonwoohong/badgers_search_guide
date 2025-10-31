@@ -21,6 +21,6 @@ dependencies:
   - pip:
       - flexs               # PyPI; works with the shim above
       - fastaparser==1.1
-      - keras==2.11.0
+      - keras==2.15.0
       - tensorflow[and-cuda]
       - adapt-diagnostics

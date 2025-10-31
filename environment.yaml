@@ -15,12 +15,13 @@ dependencies:
   - openpyxl
   - biopython=1.85
   - editdistance
+  - adapt=1.6.0
 
 
 
   - pip:
       - flexs               # PyPI; works with the shim above
       - fastaparser==1.1
-      - keras==2.15.0
-      - tensorflow[and-cuda]
-      - adapt-diagnostics
+      #- keras==2.15.0
+      #- tensorflow[and-cuda]
+

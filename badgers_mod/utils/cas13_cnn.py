@@ -1,7 +1,7 @@
 """Utility script to enable the use of the Cas13a predictive models from the ADAPT publication (https://www.nature.com/articles/s41587-022-01213-5)"""
 import os
 import adapt
-    from adapt.utils import predict_activity
+from adapt.utils import predict_activity
 import tensorflow as tf
 
 dir_path = adapt.utils.version.get_project_path()

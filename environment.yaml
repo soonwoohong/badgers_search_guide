@@ -17,7 +17,9 @@ dependencies:
   - editdistance
   - adapt=1.6.0
 
+
   - pip:
       - flexs               # PyPI; works with the shim above
       - fastaparser==1.1
-      - 'tensorflow[and-cuda]'
+      - 'tensorflow[and-cuda]==2.11.0'
+      - keras==2.11.0

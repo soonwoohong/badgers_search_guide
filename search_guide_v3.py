@@ -208,5 +208,6 @@ for cluster in clusters:
         final_output = pd.DataFrame(rows)
         os.makedirs("./output", exist_ok=True)
         final_output.to_excel(f"./output/best_crRNA_cluster_{cluster_idx}_mm_{num_mismatches}.xlsx")
-        cluster_idx += 1
+
+    cluster_idx += 1
 

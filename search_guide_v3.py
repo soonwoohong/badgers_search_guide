@@ -22,6 +22,11 @@ import tensorflow as tf
 from badgers_mod.utils import cas13_cnn as cas13_cnn
 import pandas as pd
 import os
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"          # stop pre-allocating the whole GPU
+os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"       # reduces fragmentation on CUDA>=11.2
 
 import itertools
 from Bio import Align
@@ -36,11 +41,14 @@ scan_size = 10
 top_k_crRNA = 4
 max_mismatches = 10
 cut_off = -2
-BATCH_SIZE = 512
+BATCH_SIZE = 2**10
 
 # heatmap parameter
-cell_size = 0.4 # in the heatmap (inch)
-color_map_type = "YlGnBu"#"viridis" # or "YlGnBu"
+# heatmap parameter
+cell_size = 0.4  # in the heatmap (inch)
+color_map_type = "YlGnBu"  # "viridis" # or "YlGnBu"
+vmin = - 3.5
+vmax = - 1
 
 # gen_guide, target_set1, target_set2
 #gen_guide_file = './cluster1-3_final_merge.xlsx'
@@ -137,6 +145,22 @@ def chunked(iterable, size):
     if buf:
         yield buf
 
+def score_batch(guides_onehot, seqs_onehot, pos4 = pos4):
+    # returns weighted [B, T]
+    pred_perf, pred_act = cas13_cnn.run_full_model(guides_onehot, seqs_onehot)
+    return pred_act * (pred_perf + pos4) - pos4
+
+def reduce_offtargets(weighted, interest):
+    # weighted: [B, T] (float16/float32)
+    T = tf.shape(weighted)[1]
+    col_mask = tf.ones([T], dtype=tf.bool)
+    col_mask = tf.tensor_scatter_nd_update(col_mask, indices=[[interest]], updates=[False])
+    off = tf.boolean_mask(weighted, col_mask, axis=1)        # [B, T-1]
+    on = weighted[:, interest]                                # [B]
+    top_off = tf.reduce_max(off, axis=1)                      # [B]
+    mean_off = tf.reduce_mean(off, axis=1)                    # [B]
+    return on, top_off, mean_off
+
 cluster_idx = 1
 for cluster in clusters:
     for num_mismatches in range(1, max_mismatches+1):
@@ -164,37 +188,35 @@ for cluster in clusters:
 
                 # The predictive models require 10 nt of context on each side of the 28 nt probe-binding region
                 seqs_frag = [s[start_pos - context_nt-1:start_pos - context_nt-1 + 48] for s in seqs]
-                seqs_onehot = [prep_seqs.one_hot_encode(x) for x in seqs_frag]
+                seqs_onehot_np = np.stack([prep_seqs.one_hot_encode(x) for x in seqs_frag], axis = 0)
+                seqs_onehot = tf.convert_to_tensor(seqs_onehot_np, dtype=tf.float16)
                 for candidate_guides in chunked(guide_set, BATCH_SIZE):
-                    candidate_guides_onehot = [prep_seqs.one_hot_encode(g) for g in candidate_guides]
+                    candidate_guides_onehot_np = np.stack([prep_seqs.one_hot_encode(g) for g in candidate_guides], axis=0)
+                    guides  = tf.convert_to_tensor(candidate_guides_onehot_np, dtype=tf.float16)
 
-                    with tf.device("/GPU:0"):
-                        pred_perf_seqs, pred_act_seqs = cas13_cnn.run_full_model(candidate_guides_onehot, seqs_onehot)
-                        weighted_perf_seqs = tf.math.subtract(tf.math.multiply(pred_act_seqs, tf.math.add(pred_perf_seqs, pos4)), pos4)
-                    weighted_perf_seqs_np = weighted_perf_seqs.numpy()
-                    # score
-                    # instead of just subtracting the mean off-target from the on-target,
-                    # put the additional penalty of top_off_target.
-                    # later, I can add some weights to increase either of penalty.
-                    on_target_act = weighted_perf_seqs_np[:,interest]
-                    # threshold mask
-                    cut_off_mask = on_target_act > cut_off
-                    filtered_guide_set = np.array(candidate_guides)[cut_off_mask]
-                    filtered_on_target_act = on_target_act[cut_off_mask]
-                    filtered_perf = weighted_perf_seqs_np[cut_off_mask]
+                    weighted = score_batch(guides, seqs_onehot)
+                    on, top_off, mean_off = reduce_offtargets(weighted, interest)
+                    keep_mask = on > cut_off
 
-                    # top_off_target_activity
-                    mask_for_top_off_target = filtered_perf != filtered_on_target_act[:, None]
-                    arr = filtered_perf.copy()
-                    arr[~mask_for_top_off_target] = np.nan
-                    top_off_target_act = np.nanmax(arr, axis = 1)
-                    mean_off_target_act = np.nanmean(arr, axis =1)
-                    #temp_score = filtered_on_target_act - (top_off_target_act + mean_off_target_act)/2
-                    temp_score = filtered_on_target_act - (top_off_target_act + mean_off_target_act)
-                    for ii in range(len(filtered_guide_set)):
-                        selected_crRNAs[target_name[idx_of_interest]].append((start_pos, filtered_guide_set[ii], temp_score[ii], filtered_on_target_act[ii]))
+                    # compute score on GPU, then pull back only the small kept slice
+                    temp_score = on - (top_off + mean_off)
+                    idx_keep = tf.where(keep_mask)[:, 0]
+                    if tf.size(idx_keep) == 0:
+                        continue
 
-                    selected_crRNAs[target_name[idx_of_interest]] = sorted(selected_crRNAs[target_name[idx_of_interest]], key=lambda x: -1e16 if np.isnan(x[2]) else x[2], reverse=True)[:top_k_crRNA]
+                    kept_scores = tf.gather(temp_score, idx_keep).numpy().astype("float32")
+                    kept_on = tf.gather(on, idx_keep).numpy().astype("float32")
+                    kept_guides = np.array(candidate_guides, dtype=object)[idx_keep.numpy()]
+
+                    tgt_key = target_name[idx_of_interest]
+                    bucket = selected_crRNAs[tgt_key]
+                    for seq_, sc_, on_ in zip(kept_guides, kept_scores, kept_on):
+                        bucket.append((start_pos, seq_, sc_, on_))
+                    # keep only top_k per on-target
+                    bucket.sort(key=lambda x: (-1e16 if np.isnan(x[2]) else x[2]), reverse=True)
+                    del bucket[top_k_crRNA:]
+
+                    selected_crRNAs[tgt_key] = bucket
 
         # make a dataframe to export
         rows = []
@@ -210,7 +232,17 @@ for cluster in clusters:
 
         final_output = pd.DataFrame(rows)
         os.makedirs("./output", exist_ok=True)
-        final_output.to_excel(f"./output/best_crRNA_cluster_{cluster_idx}_mm_{num_mismatches}.xlsx")
+        final_output_name = f"./output/best_crRNA_cluster_{cluster_idx}_mm_{num_mismatches}"
+        final_output.to_excel(final_output_name+".xlsx")
+
+
 
     cluster_idx += 1
+
+
+
+
+
+
+
 

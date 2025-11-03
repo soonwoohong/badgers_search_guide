@@ -15,7 +15,7 @@ dependencies:
   - openpyxl
   - biopython=1.85
   - editdistance
-  #- adapt=1.6.0
+  - adapt=1.6.0
 
 
 

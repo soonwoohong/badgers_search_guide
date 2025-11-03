@@ -27,7 +27,7 @@ vmax = - 1
 
 
 # gen_guide, target_set1, target_set2
-gen_guide_file = '/Users/soonwoohong/Library/CloudStorage/GoogleDrive-sh5230@princeton.edu/.shortcut-targets-by-id/1fc61rmoxxDIgSxNlbKpHNutryvyYltP4/Soonwoo/python/badgers_search_guide/output/best_crRNA_cluster_1_mm_1.xlsx'
+gen_guide_file = '/Users/soonwoohong/Library/CloudStorage/GoogleDrive-sh5230@princeton.edu/.shortcut-targets-by-id/1fc61rmoxxDIgSxNlbKpHNutryvyYltP4/Soonwoo/python/badgers_search_guide/output/best_crRNA_cluster_1_mm_3a.xlsx'
 target_list_file = '/Users/soonwoohong/Library/CloudStorage/GoogleDrive-sh5230@princeton.edu/.shortcut-targets-by-id/1fc61rmoxxDIgSxNlbKpHNutryvyYltP4/Soonwoo/Projects/TB DST - CRISPR/sequence data/INH/inhA/results/one-vs-others/INH_inhA_targets_incl_WT.xlsx'
 gen_guide_data = pd.read_excel(gen_guide_file, header=0)
 # this target file should have WT sequence if you want to include it

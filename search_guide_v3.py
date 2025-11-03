@@ -24,6 +24,7 @@ import pandas as pd
 import os
 import matplotlib.pyplot as plt
 import seaborn as sns
+import argparse
 
 os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"          # stop pre-allocating the whole GPU
 os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"       # reduces fragmentation on CUDA>=11.2
@@ -40,10 +41,22 @@ pos4 = tf.constant(4.0)
 scan_size = 10
 top_k_crRNA = 4
 max_mismatches = 10
-cut_off = -2
-BATCH_SIZE = 2**10
+#cut_off = -2
+#BATCH_SIZE = 2**11
+parser = argparse.ArgumentParser()
+parser.add_argument("-b", "--batch_size", help="batch size for crRNA search. change it based on the GPU memory", type=int, required=True, default=2048)
+parser.add_argument("-c", "--cut_off", help="cut-off on-target activity", type=float, required=True, default=-2)
+parser.add_argument("-p", "--project_name", help="project name", type=str, required=True, default="output")
 
-# heatmap parameter
+args = parser.parse_args()
+
+BATCH_SIZE = args.batch_size
+cut_off = args.cut_off
+project_name = args.project_name
+
+output_dir = os.path.join("./output", project_name)
+os.makedirs(output_dir, exist_ok=True)
+
 # heatmap parameter
 cell_size = 0.4  # in the heatmap (inch)
 color_map_type = "YlGnBu"  # "viridis" # or "YlGnBu"
@@ -220,6 +233,7 @@ for cluster in clusters:
 
         # make a dataframe to export
         rows = []
+        fig_data = []
         for on_target_name, entries in selected_crRNAs.items():
             for pos, seq_list, score, on_target_activity in entries:
                 rows.append({
@@ -230,10 +244,33 @@ for cluster in clusters:
                     "mean_on_target_act": on_target_activity,
                 })
 
+                # plotting
+                seqs_fig = [s.upper()[pos - context_nt - 1:pos - context_nt - 1 + 48] for s in target_data.new_seq]
+                seqs_fig_onehot_np = np.stack([prep_seqs.one_hot_encode(x) for x in seqs_fig], axis=0)
+                seqs_fig_onehot = tf.convert_to_tensor(seqs_fig_onehot_np, dtype=tf.float16)
+
+                plotting_guides = tf.convert_to_tensor([prep_seqs.one_hot_encode(seq_list)], dtype=tf.float16)
+                weighted_fig = score_batch(plotting_guides, seqs_fig_onehot)
+                fig_data.append(weighted_fig)
+
         final_output = pd.DataFrame(rows)
-        os.makedirs("./output", exist_ok=True)
-        final_output_name = f"./output/best_crRNA_cluster_{cluster_idx}_mm_{num_mismatches}"
-        final_output.to_excel(final_output_name+".xlsx")
+        final_output_name = os.path.join(output_dir,f"./best_crRNA_co_{cut_off}_cluster_{cluster_idx}_mm_{num_mismatches}")
+        final_output.to_excel(final_output_name + ".xlsx")
+
+        # for plot
+        final_fig_data = np.array(fig_data).reshape(len(fig_data), -1)
+        fig, ax = plt.subplots(figsize=(cell_size * final_fig_data.shape[0] + 3,
+                                        cell_size * final_fig_data.shape[1] + 1),
+                               dpi=300)
+
+        sns.heatmap(final_fig_data.transpose(), cmap=color_map_type,
+                    square=True,
+                    ax=ax, linewidth=0.3, linecolor='black',
+                    vmin=vmin, vmax=vmax)
+        plt.show()
+        fig.savefig(final_output_name + "_score.png", bbox_inches='tight', dpi=300)
+
+
 
 
 

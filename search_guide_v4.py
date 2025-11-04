@@ -1,4 +1,7 @@
 """
+++ v4
+optimization, jit compiler
+
 +batch mode
 +GPU or multiple CPU options
 
@@ -10,6 +13,7 @@ calculate a batch of guides
 Input:
 target sequence
 (optional) guide sequence (starting)
+
 
 
 """
@@ -25,6 +29,17 @@ import os
 import matplotlib.pyplot as plt
 import seaborn as sns
 import argparse
+import logging
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+
+logger = logging.getLogger()
+
+
 
 os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"          # stop pre-allocating the whole GPU
 os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"       # reduces fragmentation on CUDA>=11.2
@@ -35,7 +50,7 @@ from Bio import Align
 # adapt prediction parameters (don't change unless necessary)
 grid = {'c': 1.0, 'a': 3.769183, 'k': -3.833902, 'o': -2.134395, 't2w': 2.973052}
 context_nt = 10
-pos4 = tf.constant(4.0)
+pos4 = tf.constant(4.0, dtype = tf.float16)
 
 # search parameter
 scan_size = 10
@@ -187,13 +202,13 @@ for cluster in clusters:
     for num_mismatches in range(1, max_mismatches+1):
         cluster_start = mm_coordinates[cluster[0]-1][1]
         cluster_end = mm_coordinates[cluster[-1]-1][2]
-        print(f"total nuber of intended mismatches: {num_mismatches}")
-        print(f"Cluster {cluster} starts at {cluster_start} and ends at {cluster_end}")
-        print(f"Target sequences: {[target_name[i] for i in cluster]}")
-        print("--------------------------------")
+        logger.info(f"total nuber of intended mismatches: {num_mismatches}")
+        logger.info(f"Cluster {cluster} starts at {cluster_start} and ends at {cluster_end}")
+        logger.info(f"Target sequences: {[target_name[i] for i in cluster]}")
+        logger.info("--------------------------------")
         search_start = cluster_start - scan_size
         search_end = cluster_end + scan_size
-        print(f"Search region starts at {search_start} and ends at {search_end}")
+        logger.info(f"Search region starts at {search_start} and ends at {search_end}")
         cluster_incl_WT = [0] + cluster # put the wt sequence to the head of list
         seqs = [target_seqs[cluster_idx].upper() for cluster_idx in cluster_incl_WT]
         selected_crRNAs = {target_name[i]: [] for i in cluster_incl_WT}

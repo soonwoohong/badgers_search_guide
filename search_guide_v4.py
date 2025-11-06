@@ -69,12 +69,14 @@ top_k_crRNA = 4
 #BATCH_SIZE = 2**11
 #project_name = "test"
 #file_name = 'INH_inhA_targets_incl_WT.xlsx'
+#is_cluster = True
 parser = argparse.ArgumentParser()
 parser.add_argument("-b", "--batch_size", help="batch size for crRNA search. change it based on the GPU memory", type=int, default=2048)
 parser.add_argument("-c", "--cut_off", help="cut-off on-target activity", type=float, default=-2)
 parser.add_argument("-p", "--project_name", help="project name", type=str, default="output")
 parser.add_argument("-f", "--file_name", help="file name", type=str, default="INH_inhA_targets_incl_WT.xlsx")
 parser.add_argument("-mm", "--max_mismatches", help="maximum mismatch", type=int, default=5)
+parser.add_argument("-cl", "--is_cluster", help="are the input sequences already clustered?", type=bool, default=False)
 args = parser.parse_args()
 
 BATCH_SIZE = args.batch_size
@@ -82,6 +84,7 @@ cut_off = args.cut_off
 project_name = args.project_name
 file_name = args.file_name
 max_mismatches = args.max_mismatches
+is_cluster = args.is_cluster
 
 output_dir = os.path.join("./output", project_name)
 os.makedirs(output_dir, exist_ok=True)
@@ -124,25 +127,28 @@ clusters = []
 current_cluster = []
 anchor_start = None # first start in the current cluster
 
-for idx, start, end in mm_coordinates:
-    if anchor_start is None:
-        # starting first cluster
-        current_cluster = [idx]
-        anchor_start = start
-    elif end - anchor_start <= cluster_size:
-        # close enough to current cluster
-        current_cluster.append(idx)
-    else:
-        # too far → commit old cluster, start new one
+if not is_cluster:
+    for idx, start, end in mm_coordinates:
+        if anchor_start is None:
+            # starting first cluster
+            current_cluster = [idx]
+            anchor_start = start
+        elif end - anchor_start <= cluster_size:
+            # close enough to current cluster
+            current_cluster.append(idx)
+        else:
+            # too far → commit old cluster, start new one
+            current_cluster = natsort.natsorted(current_cluster)
+            clusters.append(current_cluster)
+            current_cluster = [idx]
+            anchor_start = start
+
+    # add the last cluster
+    if current_cluster:
         current_cluster = natsort.natsorted(current_cluster)
         clusters.append(current_cluster)
-        current_cluster = [idx]
-        anchor_start = start
-
-# add the last cluster
-if current_cluster:
-    current_cluster = natsort.natsorted(current_cluster)
-    clusters.append(current_cluster)
+else:
+    clusters = [[i+1] for i in range(len(target_seqs)-1)]
 
 # search crRNAs
 

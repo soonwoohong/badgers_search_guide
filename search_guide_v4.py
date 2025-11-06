@@ -99,7 +99,7 @@ target_list_file = os.path.join('./',file_name)
 
 target_data = pd.read_excel(target_list_file, header=0)
 target_seqs = target_data.new_seq.to_list()
-WT_seq = target_seqs[0] # change this in case that you have WT (or base seq) not in the first row.
+WT_seq = target_seqs[0].upper() # change this in case that you have WT (or base seq) not in the first row.
 target_name = target_data.new_name.to_list()
 
 mm_coordinates = []
@@ -108,7 +108,7 @@ aligner = Align.PairwiseAligner()
 # check where mismatch starts and ends
 for i in range(len(target_seqs)-1):
     ii = i+1
-    alignments = aligner.align(WT_seq, target_seqs[ii])
+    alignments = aligner.align(WT_seq, target_seqs[ii].upper())
     alignment = alignments[0]
     mm_start = alignment.aligned[0][0][1]
     mm_end = alignment.aligned[0][-1][0]

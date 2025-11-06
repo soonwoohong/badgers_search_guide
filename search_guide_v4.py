@@ -21,15 +21,14 @@ target sequence
 # change the color profile
 
 import numpy as np
-from badgers_mod.utils import prepare_sequences as prep_seqs
-import tensorflow as tf
-from badgers_mod.utils import cas13_cnn as cas13_cnn
+
 import pandas as pd
 import os
 import matplotlib.pyplot as plt
 import seaborn as sns
 import argparse
 import logging
+import natsort
 
 # Set up logging
 logging.basicConfig(
@@ -39,10 +38,20 @@ logging.basicConfig(
 
 logger = logging.getLogger()
 
-
-
 os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"          # stop pre-allocating the whole GPU
 os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"       # reduces fragmentation on CUDA>=11.2
+
+import tensorflow as tf
+tf.config.threading.set_intra_op_parallelism_threads(os.cpu_count())
+tf.config.threading.set_inter_op_parallelism_threads(max(2, os.cpu_count()//2))
+# JIT / XLA & device placement
+tf.config.optimizer.set_jit(True)
+tf.config.set_soft_device_placement(True)
+
+from badgers_mod.utils import prepare_sequences as prep_seqs
+from badgers_mod.utils import cas13_cnn as cas13_cnn
+
+
 
 import itertools
 from Bio import Align
@@ -50,27 +59,29 @@ from Bio import Align
 # adapt prediction parameters (don't change unless necessary)
 grid = {'c': 1.0, 'a': 3.769183, 'k': -3.833902, 'o': -2.134395, 't2w': 2.973052}
 context_nt = 10
-pos4 = tf.constant(4.0, dtype = tf.float16)
+pos4 = tf.constant(4.0)
 
 # search parameter
 scan_size = 10
 top_k_crRNA = 4
-max_mismatches = 6
+#max_mismatches = 5
 #cut_off = -2
 #BATCH_SIZE = 2**11
 #project_name = "test"
 #file_name = 'INH_inhA_targets_incl_WT.xlsx'
 parser = argparse.ArgumentParser()
-parser.add_argument("-b", "--batch_size", help="batch size for crRNA search. change it based on the GPU memory", type=int, required=True, default=2048)
-parser.add_argument("-c", "--cut_off", help="cut-off on-target activity", type=float, required=True, default=-2)
-parser.add_argument("-p", "--project_name", help="project name", type=str, required=True, default="output")
-parser.add_argument("-f", "--file_name", help="file name", type=str, required=True, default="INH_inhA_targets_incl_WT.xlsx")
+parser.add_argument("-b", "--batch_size", help="batch size for crRNA search. change it based on the GPU memory", type=int, default=2048)
+parser.add_argument("-c", "--cut_off", help="cut-off on-target activity", type=float, default=-2)
+parser.add_argument("-p", "--project_name", help="project name", type=str, default="output")
+parser.add_argument("-f", "--file_name", help="file name", type=str, default="INH_inhA_targets_incl_WT.xlsx")
+parser.add_argument("-mm", "--max_mismatches", help="maximum mismatch", type=int, default=5)
 args = parser.parse_args()
 
 BATCH_SIZE = args.batch_size
 cut_off = args.cut_off
 project_name = args.project_name
 file_name = args.file_name
+max_mismatches = args.max_mismatches
 
 output_dir = os.path.join("./output", project_name)
 os.makedirs(output_dir, exist_ok=True)
@@ -123,12 +134,14 @@ for idx, start, end in mm_coordinates:
         current_cluster.append(idx)
     else:
         # too far → commit old cluster, start new one
+        current_cluster = natsort.natsorted(current_cluster)
         clusters.append(current_cluster)
         current_cluster = [idx]
         anchor_start = start
 
 # add the last cluster
 if current_cluster:
+    current_cluster = natsort.natsorted(current_cluster)
     clusters.append(current_cluster)
 
 # search crRNAs
@@ -178,14 +191,12 @@ def chunked(iterable, size):
 tf.config.optimizer.set_jit(True)  # XLA on
 
 @tf.function(jit_compile=True)
-
 def score_batch(guides_onehot, seqs_onehot, pos4 = pos4):
     # returns weighted [B, T]
     pred_perf, pred_act = cas13_cnn.run_full_model(guides_onehot, seqs_onehot)
     return pred_act * (pred_perf + pos4) - pos4
 
 @tf.function(jit_compile=True)
-
 def reduce_offtargets(weighted, interest):
     # weighted: [B, T] (float16/float32)
     T = tf.shape(weighted)[1]
@@ -196,6 +207,21 @@ def reduce_offtargets(weighted, interest):
     top_off = tf.reduce_max(off, axis=1)                      # [B]
     mean_off = tf.reduce_mean(off, axis=1)                    # [B]
     return on, top_off, mean_off
+
+def guide_batches(start_seq, k, batch):
+    def gen():
+        for gids in chunked(generate_intentional_mismatches(start_seq, k), batch):
+            arr = np.stack([prep_seqs.one_hot_encode(g) for g in gids], axis=0).astype('float32')
+            yield arr, np.asarray(gids, dtype=np.str_)
+
+    return tf.data.Dataset.from_generator(
+        gen,
+        output_signature=(
+            tf.TensorSpec(shape=(None, 28, 4), dtype=tf.float32),  # guides one-hot
+            tf.TensorSpec(shape=(None,), dtype=tf.string),  # raw guide strings
+        ),
+    ).prefetch(tf.data.AUTOTUNE)
+
 
 cluster_idx = 1
 for cluster in clusters:
@@ -217,22 +243,16 @@ for cluster in clusters:
             # The predictive models require 10 nt of context on each side of the 28 nt probe-binding region
             seqs_frag = [s[start_pos - context_nt - 1:start_pos - context_nt - 1 + 48] for s in seqs]
             seqs_onehot_np = np.stack([prep_seqs.one_hot_encode(x) for x in seqs_frag], axis=0)
-            seqs_onehot = tf.convert_to_tensor(seqs_onehot_np, dtype=tf.float16)
+            seqs_onehot = tf.convert_to_tensor(seqs_onehot_np, dtype=tf.float32)
 
             for interest in range(len(seqs)):
                 seq_of_interest = seqs[interest]
                 idx_of_interest = cluster_incl_WT[interest]
                 start_guide = [seq_of_interest[start_pos-1:start_pos-1+28]]
 
-
-                guide_set = generate_intentional_mismatches(start_guide[0], num_mismatches = num_mismatches)
-
-
-                for candidate_guides in chunked(guide_set, BATCH_SIZE):
-                    candidate_guides_onehot_np = np.stack([prep_seqs.one_hot_encode(g) for g in candidate_guides], axis=0)
-                    guides  = tf.convert_to_tensor(candidate_guides_onehot_np, dtype=tf.float16)
-
+                for guides, raw_guides in guide_batches(start_guide[0], num_mismatches, BATCH_SIZE):
                     weighted = score_batch(guides, seqs_onehot)
+
                     on, top_off, mean_off = reduce_offtargets(weighted, interest)
                     keep_mask = on > cut_off
 
@@ -244,7 +264,9 @@ for cluster in clusters:
 
                     kept_scores = tf.gather(temp_score, idx_keep).numpy().astype("float32")
                     kept_on = tf.gather(on, idx_keep).numpy().astype("float32")
-                    kept_guides = np.array(candidate_guides, dtype=object)[idx_keep.numpy()]
+                    # gather raw strings; result is tf.string -> bytes in numpy, decode to str
+                    kept_guides = tf.gather(raw_guides, idx_keep).numpy()
+                    kept_guides = [g.decode("utf-8") for g in kept_guides]
 
                     tgt_key = target_name[idx_of_interest]
                     bucket = selected_crRNAs[tgt_key]
@@ -272,9 +294,9 @@ for cluster in clusters:
                 # plotting
                 seqs_fig = [s.upper()[pos - context_nt - 1:pos - context_nt - 1 + 48] for s in seqs]
                 seqs_fig_onehot_np = np.stack([prep_seqs.one_hot_encode(x) for x in seqs_fig], axis=0)
-                seqs_fig_onehot = tf.convert_to_tensor(seqs_fig_onehot_np, dtype=tf.float16)
+                seqs_fig_onehot = tf.convert_to_tensor(seqs_fig_onehot_np, dtype=tf.float32)
 
-                plotting_guides = tf.convert_to_tensor([prep_seqs.one_hot_encode(seq_list)], dtype=tf.float16)
+                plotting_guides = tf.convert_to_tensor([prep_seqs.one_hot_encode(seq_list)], dtype=tf.float32)
                 weighted_fig = score_batch(plotting_guides, seqs_fig_onehot)
                 fig_data.append(weighted_fig)
 

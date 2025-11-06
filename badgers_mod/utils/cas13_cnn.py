@@ -30,7 +30,7 @@ def _to_tensor(x, dtype=None):
         x = tf.cast(x, dtype)
     return x
 
-@tf.function
+@tf.function(jit_compile=True)
 def run_full_model(gen_guide, target_set, model_type = 'both'):
     """
     Modified version:

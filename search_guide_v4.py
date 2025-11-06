@@ -148,7 +148,7 @@ if not is_cluster:
         current_cluster = natsort.natsorted(current_cluster)
         clusters.append(current_cluster)
 else:
-    clusters = [[i+1] for i in range(len(target_seqs)-1)]
+    clusters = [[i+1 for i in range(len(target_seqs)-1)]]
 
 # search crRNAs
 

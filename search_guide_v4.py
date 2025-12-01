@@ -76,7 +76,7 @@ parser.add_argument("-c", "--cut_off", help="cut-off on-target activity", type=f
 parser.add_argument("-p", "--project_name", help="project name", type=str, default="output")
 parser.add_argument("-f", "--file_name", help="file name", type=str, default="INH_inhA_targets_incl_WT.xlsx")
 parser.add_argument("-mm", "--max_mismatches", help="maximum mismatch", type=int, default=5)
-parser.add_argument("-cl", "--is_cluster", help="are the input sequences already clustered?", type=bool, default=False)
+parser.add_argument("-cl", "--is_cluster", help="are the input sequences already clustered? yes/no", type = str, default = "no")
 args = parser.parse_args()
 
 BATCH_SIZE = args.batch_size
@@ -127,7 +127,9 @@ clusters = []
 current_cluster = []
 anchor_start = None # first start in the current cluster
 
-if not is_cluster:
+if is_cluster=="yes":
+    clusters = [[i + 1 for i in range(len(target_seqs) - 1)]]
+else:
     for idx, start, end in mm_coordinates:
         if anchor_start is None:
             # starting first cluster
@@ -147,8 +149,7 @@ if not is_cluster:
     if current_cluster:
         current_cluster = natsort.natsorted(current_cluster)
         clusters.append(current_cluster)
-else:
-    clusters = [[i+1 for i in range(len(target_seqs)-1)]]
+
 
 # search crRNAs
 
@@ -231,10 +232,10 @@ def guide_batches(start_seq, k, batch):
 
 cluster_idx = 1
 for cluster in clusters:
-    for num_mismatches in range(1, max_mismatches+1):
+    for num_mismatches in range(0, max_mismatches+1):
         cluster_start = mm_coordinates[cluster[0]-1][1]
         cluster_end = mm_coordinates[cluster[-1]-1][2]
-        logger.info(f"total nuber of intended mismatches: {num_mismatches}")
+        logger.info(f"total number of intended mismatches: {num_mismatches}")
         logger.info(f"Cluster {cluster} starts at {cluster_start} and ends at {cluster_end}")
         logger.info(f"Target sequences: {[target_name[i] for i in cluster]}")
         logger.info("--------------------------------")
